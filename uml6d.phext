@@ -1,0 +1,77 @@
+6D UML v0.1
+framework: 6d-uml
+phext-version: 0.3
+generator: claude-maxcollection-map:
+1: Meta
+2: Requirements
+3: Design
+4: Source
+5: Tests
+6: Regressions
+7: Docs
+8: Whitepapers
+9: Trainingdimension-map:
+collection: SDLC Phase
+volume: Sprint/Release
+book: Module
+chapter: Component
+section: File
+scroll: Unitmodule-registry:
+# book.chapter assignments
+# (empty - populate as modules are added)# System Requirements
+This collection captures user requirements and use cases.
+Each module (book) contains its requirements organized by component (chapter).UC-1: System Initialization
+Actor: Developer
+Precondition: Empty workspace
+Flow:
+1. Developer creates a new 6D UML phext document
+2. System populates Meta collection with defaults
+3. System presents the requirement entry point
+Postcondition: Living document ready for development# System Design
+This collection captures architecture and UML diagrams.
+Diagrams here are live entry points into the source (collection 4),
+tests (collection 5), and documentation (collection 7).@startuml 6D-UML-Core
+class PhextDocument {
+  +content: String
+  +fetch(coord: Coordinate): String
+  +insert(coord: Coordinate, content: String)
+  +walk_collection(addr_5d: Address5D): Stack
+}
+
+class Address5D {
+  +volume: usize
+  +book: usize
+  +chapter: usize
+  +section: usize
+  +scroll: usize
+  +to_coordinate(collection: usize): Coordinate
+}
+
+class ArtifactStack {
+  +address: Address5D
+  +layers: Vec<(usize, String)>
+  +push(collection: usize, content: String)
+  +peek(collection: usize): String
+  +walk(): Iterator<(usize, String)>
+}
+
+class CollectionMap {
+  +assignments: HashMap<usize, String>
+  +phase(collection: usize): String
+  +update(collection: usize, name: String)
+}
+
+PhextDocument --> Address5D
+PhextDocument --> ArtifactStack
+PhextDocument --> CollectionMap
+@enduml# Source Code
+Implementation artifacts live here.
+Each unit at a 5D address corresponds to its requirement (collection 2)
+and design (collection 3) at the same address.# Tests
+Unit and integration tests.
+Test addresses mirror the source they validate.# Regressions
+Regression test suites tracking known issues and their fixes.# Documentation
+Developer and user documentation.
+Each artifact's docs live at the same 5D address as its source.# Whitepapers
+Technical papers and research supporting design decisions.# Training
+Onboarding and training materials for new team members.
