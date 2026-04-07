@@ -1,7 +1,8 @@
 6D UML v0.1
 framework: 6d-uml
-phext-version: 0.3
-generator: claude-maxcollection-map:
+phext-version: 0.3.1
+generator: claude-max
+system: phext-lattice + uml6dcollection-map:
 1: Meta
 2: Requirements
 3: Design
@@ -17,61 +18,653 @@ book: Module
 chapter: Component
 section: File
 scroll: Unitmodule-registry:
-# book.chapter assignments
-# (empty - populate as modules are added)# System Requirements
-This collection captures user requirements and use cases.
-Each module (book) contains its requirements organized by component (chapter).UC-1: System Initialization
-Actor: Developer
-Precondition: Empty workspace
-Flow:
-1. Developer creates a new 6D UML phext document
-2. System populates Meta collection with defaults
-3. System presents the requirement entry point
-Postcondition: Living document ready for development# System Design
-This collection captures architecture and UML diagrams.
-Diagrams here are live entry points into the source (collection 4),
-tests (collection 5), and documentation (collection 7).@startuml 6D-UML-Core
-class PhextDocument {
-  +content: String
-  +fetch(coord: Coordinate): String
-  +insert(coord: Coordinate, content: String)
-  +walk_collection(addr_5d: Address5D): Stack
+book.1: Core (coordinate_ext, index)
+book.2: Storage (mmap)
+book.3: Navigation (navigator, cursor)
+book.4: Search
+book.5: Topology (sentron, stats)
+book.6: Editor (editor, modes)
+book.7: UML6D (uml6d)
+book.8: Undo (undo)
+book.9: TTS (tts)
+book.10: Web UI (phext_edit, uml6d_edit)dependency-map:
+external:
+  libphext 0.3.1: Coordinate types, delimiters, phokenize, explode/implode
+  memmap2 0.9: Cross-platform memory-mapped file I/O
+  rayon 1.10: Work-stealing parallelism
+  serde 1 + serde_json 1: JSON serialization (web feature)
+  ratatui 0.29 + crossterm 0.28: TUI rendering (tui feature)
+  tempfile 3: Temporary file support
+internal:
+  uml6d -> index, mmap
+  mmap -> index
+  navigator -> coordinate_ext
+  search -> index
+  sentron -> index, coordinate_ext
+  editor -> cursor, undo
+  web_ui -> mmap, navigator, sentron, search, stats, uml6dR1 -- Core Engine
+The foundation layer providing coordinate extensions and O(1) lattice indexing.
+All other modules depend on Core for coordinate manipulation and content lookup.R1.1 -- Coordinate Extensions
+- Hash + Eq + Ord for HashMap-based index
+- Dimension enum mapping 1-9 keys to nine phext dimensions
+- CoordinateNav trait: forward/backward in named dimension with lower-dim reset
+- Peek movement without resetting lower dims
+- Delimiter byte mapping for each dimension
+- Value get/set for any dimension with clampingR1.2 -- Lattice Index
+- Single O(n) scan builds HashMap<Coordinate, ScrollSpan>
+- O(1) coordinate lookup thereafter
+- Sorted coordinate list for binary search navigation
+- next_populated / prev_populated jump to nearest content
+- Dimension extent queries for density analysis
+- coordinates_matching predicate filter
+- ScrollSpan stores byte offsets (start, end) for mmap integrationR1.1 -- Memory-Mapped I/O
+The editor's I/O foundation. Memory-map phext files and build LatticeIndex over raw bytes.R1.1.1 -- MappedLattice
+- Memory-map phext files read-only via memmap2
+- Copy-on-write overlay: HashMap<Coordinate, ScrollOverlay>
+- Three states: Modified(String), Deleted, Inserted(String)
+- Byte-perfect roundtrip reconstruction on save
+- read_scroll: check overlay first, fallback to mmap span
+- write_scroll: edits go to overlay, mmap never modified
+- save: reconstruct from mmap spans + overlay deltas, re-mmap, rebuild index
+- 4MB file = 4MB virtual address space, not heapR1.3 -- Navigator
+The cursor model for 9D phext navigation. The 'mind' of Lattice mode.R1.3.1 -- Navigator
+- 9D cursor tracking current coordinate
+- Active dimension selection (1-9 keys)
+- Forward/backward movement with lower dimension reset
+- Marks stack for position bookmarks
+- History with back/forward navigation
+- next_populated / prev_populated via index binary searchR1.3.2 -- Intra-Scroll Cursor
+- Position: (line, col) 0-indexed
+- Selection: start/end with direction
+- from_offset / to_offset conversion
+- Word-boundary navigation
+- Sticky column across vertical moves
+- Bridge between Lattice mode and Edit modeR1.4 -- Search
+- Full-text search across all scrolls
+- Returns coordinates, not byte offsets
+- Parallel via rayon for files > 512KB, serial for smaller
+- Case-insensitive by default
+- Atomic early termination at max_results
+- Context extraction (40 chars around match)
+- search_lattice_auto picks parallel vs serialR1.5 -- Topology
+Sentron neural topology and lattice statistics.R1.5.1 -- Sentron
+- 2x4 connections per neuron (fwd + bwd x 4 axes)
+- 5x8 neurons per sentron (40 total)
+- Manhattan distance ordering from cursor
+- 8 dims: structural (Library/Shelf/Series/Collection) + sequential (Volume/Book/Chapter/Section)
+- Scroll is the neuron center
+- Sub-millisecond rebuildR1.6 -- Statistics
+- ScrollStats: byte_size, line_count, word_count, char_count
+- DimensionDensity: distribution of scroll counts per dimension value
+- Sparkline rendering
+- Neighborhood: populated coords near cursor
+- LatticeOverview: total scrolls, total bytes, dimension extentsR1.7-R1.9 -- Editor Framework
+Pluggable editing modes. Sits between navigator and mode.R1.7 -- Editor Mode Trait
+- Pluggable EditorMode trait
+- EditKey abstraction: code, ctrl, alt, shift
+- EditResult: Nothing | CursorMoved | TextChanged | ExitEdit | Status
+- CursorStyle: Block, Line, Underline
+- Framework-independentR1.9 -- Vim Mode
+- Sub-modes: Normal, Insert, Visual, Command
+- Count prefix for repeat
+- Motions: h/l/j/k/w/b/e/0/$
+- Operators: d/c/y
+- Multi-key: dd, dw, yy
+- Insert: i/a/o/O
+- Command: :w, :q, :wqR-UML6D -- 6D UML Semantic Layer
+- Map collection dimension to SDLC phases (Meta through Training)
+- 5D artifact addresses (volume.book.chapter/section.scroll)
+- Phase enum with name, short code, and color
+- ArtifactAddr extraction from full coordinates
+- Trace: walk all phases at a fixed 5D address
+- UmlContext: phase + artifact for any coordinate
+- Runtime-configurable phase assignments via Meta
+- Structural traceability: same 5D address across collectionsR1.8 -- Undo/Redo
+- Per-scroll undo/redo stacks
+- EditOp: Insert, Delete, Replace
+- Phext serialization in .work.phext
+- x.chapter = edit sequence number
+- Edit history is navigable phextR-TTS -- Coordinate Pronunciation
+- 3x5x17+1 syllable system
+- X: Onset (open/voiced/unvoiced)
+- Y: Vowel (a/e/i/o/u)
+- Z: Coda (17 terminations)
+- Zero = 'om'
+- SSML output for TTS enginesR3 -- Web UI
+HTTP-served phext editor. Zero-framework architecture.R3.1 -- phext-edit
+- Raw TcpListener, no framework
+- Embedded SPA (HTML/CSS/JS)
+- REST JSON API
+- Thread-per-connection, Arc<Mutex<AppState>>
+- Sentron panel, navtree, search, edit mode
+- Coordinate hyperlinking
+- Dark theme, keyboard navigation
+- Auth token, directory mode
+- URL hash for shareable positionsR3.7 -- uml6d-edit
+- Extends phext-edit with SDLC awareness
+- Phase badge (color-coded)
+- 5D artifact address display
+- Trace panel: all 9 phases at current 5D address
+- Phase picker (p key)
+- Quick-nav: r=REQ d=DES s=SRC x=TST
+- POST /api/phase endpoint
+- Phase-colored navtree labelsCore Module Design
+Coordinate extensions and lattice index form the foundation.@startuml coordinate_ext
+enum Dimension {
+  Scroll = 1
+  Section = 2
+  Chapter = 3
+  Book = 4
+  Volume = 5
+  Collection = 6
+  Series = 7
+  Shelf = 8
+  Library = 9
+  +from_index(i: u8): Option<Dimension>
+  +name(): &str
+  +delimiter(): u8
 }
 
-class Address5D {
-  +volume: usize
-  +book: usize
-  +chapter: usize
-  +section: usize
-  +scroll: usize
-  +to_coordinate(collection: usize): Coordinate
+trait CoordinateNav {
+  +navigate_forward(dim): bool
+  +navigate_backward(dim): bool
+  +dimension_value(dim): usize
+  +set_dimension(dim, value)
+  +with_dimension(dim, value): Coordinate
 }
 
-class ArtifactStack {
-  +address: Address5D
-  +layers: Vec<(usize, String)>
-  +push(collection: usize, content: String)
-  +peek(collection: usize): String
-  +walk(): Iterator<(usize, String)>
+Coordinate ..|> CoordinateNav
+@enduml@startuml index
+class ScrollSpan {
+  +start: usize
+  +end: usize
 }
 
-class CollectionMap {
-  +assignments: HashMap<usize, String>
-  +phase(collection: usize): String
-  +update(collection: usize, name: String)
+class LatticeIndex {
+  -entries: HashMap<Coordinate, ScrollSpan>
+  -ordered: Vec<Coordinate>
+  +build(buffer: &[u8]): LatticeIndex
+  +get(coord): Option<&ScrollSpan>
+  +contains(coord): bool
+  +scroll_count(): usize
+  +next_populated(coord): Option<Coordinate>
+  +prev_populated(coord): Option<Coordinate>
+  +dimension_extent(dim): Vec<usize>
 }
 
-PhextDocument --> Address5D
-PhextDocument --> ArtifactStack
-PhextDocument --> CollectionMap
-@enduml# Source Code
-Implementation artifacts live here.
-Each unit at a 5D address corresponds to its requirement (collection 2)
-and design (collection 3) at the same address.# Tests
-Unit and integration tests.
-Test addresses mirror the source they validate.# Regressions
-Regression test suites tracking known issues and their fixes.# Documentation
-Developer and user documentation.
-Each artifact's docs live at the same 5D address as its source.# Whitepapers
-Technical papers and research supporting design decisions.# Training
-Onboarding and training materials for new team members.
+LatticeIndex --> ScrollSpan
+@endumlStorage Module Design
+Memory-mapped I/O with copy-on-write overlay.@startuml mmap
+enum ScrollOverlay {
+  Modified(String)
+  Deleted
+  Inserted(String)
+}
+
+class MappedLattice {
+  -mmap: Mmap
+  -index: LatticeIndex
+  -overlay: HashMap<Coordinate, ScrollOverlay>
+  +open(path): MappedLattice
+  +read_scroll(coord): Option<String>
+  +write_scroll(coord, content)
+  +has_scroll(coord): bool
+  +save()
+  +to_phext_bytes(): Vec<u8>
+  +index(): &LatticeIndex
+}
+
+MappedLattice --> LatticeIndex
+MappedLattice --> ScrollOverlay
+@endumlNavigation Module Design
+9D cursor model with history, marks, and populated-jump.@startuml navigator
+class Navigator {
+  -position: Coordinate
+  -active_dimension: Dimension
+  -marks: Vec<Coordinate>
+  -history: Vec<Coordinate>
+  +new(): Navigator
+  +position(): Coordinate
+  +select_dimension(index: u8)
+  +move_forward()
+  +move_backward()
+  +goto(coord)
+  +next_populated(index)
+  +prev_populated(index)
+  +push_mark()
+  +pop_mark()
+}
+
+Navigator --> Coordinate
+Navigator --> Dimension
+@enduml@startuml cursor
+class Position {
+  +line: usize
+  +col: usize
+  +from_offset(text, offset): Position
+  +to_offset(text): usize
+}
+
+class ScrollCursor {
+  -position: Position
+  -selection: Option<Selection>
+  -sticky_col: usize
+  +move_left/right/up/down(text)
+  +word_forward/backward(text)
+}
+
+ScrollCursor --> Position
+@enduml@startuml search
+class SearchHit {
+  +coordinate: Coordinate
+  +offset: usize
+  +length: usize
+  +context: String
+}
+
+class SearchEngine <<functions>> {
+  +search_lattice(buffer, index, pattern): Vec<SearchHit>
+  +search_lattice_parallel(...): Vec<SearchHit>
+  +search_lattice_auto(...): Vec<SearchHit>
+  +search_coordinates(index, pattern): Vec<Coordinate>
+}
+
+note: Parallel threshold 512KB, context 40 chars, rayon
+@endumlTopology Module Design
+Sentron neural topology and lattice statistics.@startuml sentron
+enum AxisGroup { Structural, Sequential }
+
+class Axon {
+  +dimension: Dimension
+  +group: AxisGroup
+  +backward_count: usize
+  +forward_count: usize
+}
+
+class Sentron {
+  +center: Coordinate
+  +structural_reach: usize
+  +sequential_reach: usize
+  +build(pos, index): Sentron
+  +size(): usize
+  +structural_axons(): &[Axon]
+  +sequential_axons(): &[Axon]
+}
+
+note: 40 neurons max, 8 axons, Manhattan distance
+Sentron --> Axon
+@enduml@startuml stats
+class ScrollStats {
+  +byte_size, line_count, word_count, char_count
+  +from_bytes(bytes): ScrollStats
+}
+
+class DimensionDensity {
+  +dimension: Dimension
+  +distribution: Vec<(usize, usize)>
+  +sparkline(width): String
+}
+
+class LatticeOverview {
+  +total_scrolls, total_bytes
+  +build(buffer, index): LatticeOverview
+}
+@endumlEditor Module Design
+Pluggable editing modes with vim as default.@startuml editor
+trait EditorMode {
+  +handle_key(key, ctx): EditResult
+  +cursor_style(): CursorStyle
+  +status_text(): String
+}
+
+enum EditResult { Nothing, CursorMoved, TextChanged, ExitEdit, Status(String) }
+enum CursorStyle { Block, Line, Underline }
+
+class EditContext {
+  +text: String
+  +cursor: ScrollCursor
+  +undo: UndoEngine
+}
+
+VimMode ..|> EditorMode
+@enduml@startuml vim
+enum VimSubMode { Normal, Insert, Visual, Command }
+
+class VimMode {
+  -sub_mode: VimSubMode
+  -pending: String
+  -count: Option<usize>
+  +new(): VimMode
+}
+
+note: Grammar [count] operator [count] motion
+Motions: h/l/j/k/w/b/e/0/$
+Operators: d/c/y
+@enduml@startuml uml6d
+enum Phase {
+  Meta=1, Requirements=2, Design=3, Source=4,
+  Tests=5, Regressions=6, Docs=7, Whitepapers=8, Training=9
+  +from_collection(c): Option<Phase>
+  +name(): &str
+  +short(): &str
+  +color(): &str
+}
+
+class ArtifactAddr {
+  +volume, book, chapter, section, scroll: usize
+  +from_coordinate(c): ArtifactAddr
+  +to_coordinate(phase): Coordinate
+  +display(): String
+}
+
+class UmlContext {
+  +phase: Option<Phase>
+  +artifact: ArtifactAddr
+  +from_coordinate(c): UmlContext
+}
+
+note: 5D address stable across SDLC phases
+Phase --> ArtifactAddr
+UmlContext --> Phase
+UmlContext --> ArtifactAddr
+@enduml@startuml undo
+enum EditOp {
+  Insert { offset, text }
+  Delete { offset, deleted }
+  Replace { offset, old_text, new_text }
+}
+
+class UndoEngine {
+  -undo_stack: Vec<UndoRecord>
+  -redo_stack: Vec<UndoRecord>
+  +push(record)
+  +undo(text): Option<Position>
+  +redo(text): Option<Position>
+}
+
+note: Work file is navigable phext
+x.chapter = edit sequence number
+@enduml@startuml tts
+class CoordPronunciation {
+  +coordinate: Coordinate
+  +syllables: Vec<String>
+  +pronounce(): String
+  +to_ssml(): String
+}
+
+note: 3x5x17+1 syllable grid
+X: Onset (3: open/voiced/unvoiced)
+Y: Vowel (5: a/e/i/o/u)
+Z: Coda (17 terminations)
+Zero = om
+@endumlWeb UI Design
+Two binaries: phext-edit (generic) and uml6d-edit (SDLC-aware).@startuml phext_edit
+class AppState {
+  +lattice: MappedLattice
+  +nav: Navigator
+  +overview: LatticeOverview
+  +file_path: String
+  +dirty: bool
+}
+
+class HttpServer <<TcpListener>> {
+  +handle_request(stream, state)
+}
+
+package REST_API {
+  GET /api/nav, /api/status, /api/tree
+  POST /api/dim, /api/forward, /api/backward
+  POST /api/next, /api/prev, /api/goto
+  POST /api/update, /api/save, /api/search
+  GET /api/zoom/z, /api/zoom/y, /api/zoom/x
+  GET /api/scroll/{coord}
+}
+
+HttpServer --> AppState
+@enduml@startuml uml6d_edit
+class ApiUmlContext {
+  +phase, phase_short, phase_color: String
+  +artifact_addr: String
+  +trace: Vec<ApiTraceEntry>
+}
+
+class ApiTraceEntry {
+  +phase, phase_short, color: String
+  +collection: usize
+  +populated: bool
+}
+
+package UML6D_API {
+  POST /api/phase
+}
+
+note: Extends phext-edit with phase badge,
+trace panel, quick-nav keys, 5D display
+@enduml// Core Module -- src/coordinate_ext.rs, src/index.rs// src/coordinate_ext.rs
+//
+// Dimension enum: Scroll(1) through Library(9)
+// CoordinateNav trait: navigate_forward, navigate_backward,
+//   dimension_value, set_dimension, with_dimension
+// Delimiters: Scroll=0x17 Section=0x18 Chapter=0x19 Book=0x1A
+//   Volume=0x1C Collection=0x1D Series=0x1E Shelf=0x1F Library=0x01
+//
+// navigate_forward: uses built-in break methods
+// navigate_backward: set(current-1), reset lower dims
+// with_dimension: non-mutating, returns new coordinate// src/index.rs
+//
+// LatticeIndex::build(buffer): walks byte-by-byte tracking
+//   coordinate via delimiter bytes. ScrollSpan{start,end} stored.
+//   Coordinates pushed to sorted Vec for binary search.
+//
+// get(): HashMap O(1) lookup
+// next_populated(): binary search forward
+// prev_populated(): binary search backward
+// dimension_extent(): unique values per dimension// Storage Module -- src/mmap.rs// src/mmap.rs
+//
+// open(path): mmap read-only, build index, empty overlay
+// read_scroll: overlay first (Modified->content, Deleted->None), else mmap span
+// write_scroll: index.contains -> Modified, else Inserted
+// save: sort all coords, emit delimiters, read overlay||mmap, write temp, rename
+//   re-mmap, rebuild index, clear overlay// Navigation Module -- src/navigator.rs, src/cursor.rs// src/navigator.rs
+//
+// State: position, active_dimension, marks, history + cursor
+// select_dimension(i): set active for h/l
+// move_forward/backward: CoordinateNav on active dim
+// goto: push history, set position
+// next/prev_populated: binary search in sorted coords// src/cursor.rs
+//
+// Position: (line, col) 0-indexed
+// from_offset: walk lines to convert
+// ScrollCursor: position + selection + sticky_col
+// move_left/right: line-clamped
+// move_up/down: sticky_col preserved
+// word_forward/backward: boundary scan// src/search.rs
+//
+// search_scroll: hot inner loop, lowercased compare, context extraction
+// search_lattice: serial iterate all scrolls
+// search_lattice_parallel: rayon par_iter, atomic results
+// search_lattice_auto: buffer.len() vs 512KB threshold
+// search_coordinates: regex on coord strings// Topology Module -- src/sentron.rs, src/stats.rs// src/sentron.rs
+//
+// build(pos, index): get all coords, Manhattan distance, sort,
+//   take 40 nearest, count backward/forward per dimension
+// structural: Library/Shelf/Series/Collection
+// sequential: Volume/Book/Chapter/Section// src/stats.rs
+//
+// ScrollStats::from_bytes: count lines, words, chars
+// DimensionDensity::build: bucket by dim value
+// sparkline: unicode block chars
+// LatticeOverview::build: totals + extents// Editor Module -- src/editor.rs, src/modes/// src/editor.rs
+//
+// EditorMode trait: handle_key(EditKey, &mut EditContext) -> EditResult
+// EditContext: text (String), cursor (ScrollCursor), undo (UndoEngine)
+// EditKey: code + ctrl/alt/shift modifiers// src/modes/vim.rs
+//
+// VimMode: sub_mode, pending, count, command_buf
+// handle_normal: digits->count, h/l/j/k->move, d/c/y->operator
+// handle_insert: typing, Esc->normal
+// handle_command: :w/:q/:wq// src/uml6d.rs
+//
+// Phase enum: Meta(1)..Training(9)
+//   from_collection, name, short, color, all
+//
+// ArtifactAddr: {volume, book, chapter, section, scroll}
+//   from_coordinate, to_coordinate(phase), to_coordinate_with_outer
+//
+// UmlContext: phase + artifact from any coordinate
+// trace_artifact: check each phase at 5D address
+// artifacts_in_phase: all addrs in a given phase// src/undo.rs
+//
+// EditOp: Insert/Delete/Replace
+// UndoRecord: op + cursor_before + cursor_after
+// UndoEngine: undo_stack + redo_stack
+//   push: clear redo, push undo
+//   undo: pop, apply inverse, push redo
+//   redo: pop, apply forward, push undo
+// Phext serialization: x.chapter = sequence number// src/tts.rs
+//
+// ONSETS: ['', 'b', 'p'] (3)
+// VOWELS: ['a','e','i','o','u'] (5)
+// CODAS: ['','p','t','k','b','d','g','m','n','s','f','v','l','r','ng','sh','zh'] (17)
+// byte_to_syllable: onset[v%3] + vowel[(v/3)%5] + coda[(v/15)%17]
+// Zero = 'om'// Web UI -- src/bin/phext_edit.rs, src/bin/uml6d_edit.rs// src/bin/phext_edit.rs
+//
+// AppState: lattice + nav + overview + file_path + dirty
+// TcpListener on port, thread::spawn per connection
+// match (method, path) to API handlers
+// INDEX_HTML: ~700 lines embedded SPA
+// API: /api/nav, /api/dim, /api/forward, /api/backward,
+//   /api/next, /api/prev, /api/goto, /api/base,
+//   /api/update, /api/save, /api/search, /api/tree,
+//   /api/zoom/*, /api/scroll/*, /api/phexts, /api/open// src/bin/uml6d_edit.rs
+//
+// Extends phext-edit with:
+//   ApiUmlContext: phase, phase_short, phase_color, artifact_addr, trace
+//   POST /api/phase: change collection at fixed 5D address
+//   Frontend: phase badge, trace panel (T), phase picker (p),
+//     quick-nav r/d/s/x/R/D/w/n, UML dim labels in sentronCore Testscoordinate_ext tests:
+- coordinate_is_hashable
+- navigate_forward_and_back
+- navigate_backward_resets_lower
+- navigate_at_minimum_returns_false
+- dimension_from_index
+- with_dimension_resets_lowerindex tests:
+- build_empty, build_single_scroll, build_multi_scroll
+- next_populated, prev_populated
+- roundtrip byte-perfectmmap tests:
+- open_and_read
+- write_overlay, read_prefers_overlay
+- save_roundtrip
+- deleted_scroll, inserted_scrollnavigator tests:
+- initial_position
+- select_dimension, move_forward
+- history traversal
+- marks push/popsearch tests:
+- single_match, case_insensitive
+- max_results early termination
+- parallel matches serial
+- empty patterntopology tests:
+- sentron build and size
+- stats from_byteseditor tests:
+- mode trait dispatch
+- vim normal/insert/visualuml6d tests:
+- phase_roundtrip
+- artifact_addr_from_coordinate
+- artifact_addr_to_coordinate
+- context_from_coordinate
+- artifact_displayundo tests:
+- push/undo/redo cycle
+- phext serializationtts tests:
+- byte_to_syllable correctness
+- special coordinatesweb UI tests:
+- API endpoint integrationRegression Suite
+Track known issues and fixes. Each entry links to the commit.Quick Start Guide
+
+1. Build: cargo build --bin uml6d-edit
+2. Run: uml6d-edit file.phext [--port 8080]
+3. Navigate: 1-9 dim, h/l move, j/k jump, p phase, e edit
+4. Phase keys: r=REQ d=DES s=SRC x=TST
+5. Trace panel: T key
+6. Save: Ctrl+SCoordinate Guide
+
+Full 9D: z.z.z/y.y.y/x.x.x
+  series.shelf.library / collection.volume.book / chapter.section.scroll
+
+6D UML inner 6:
+  collection=Phase, volume=Sprint, book=Module,
+  chapter=Component, section=File, scroll=Unit
+
+5D artifact address: volume.book.chapter/section.scroll
+
+Example: 1.1.1/4.1.2/3.1.1
+  = Source (4), Sprint 1, Module 2, Component 3, File 1, Unit 1
+  Requirement: 1.1.1/2.1.2/3.1.1  Test: 1.1.1/5.1.2/3.1.1Architecture
+
+Layer 1: Core types (coordinate_ext, index)
+Layer 2: Storage (mmap + copy-on-write)
+Layer 3: Navigation (navigator, cursor)
+Layer 4: Intelligence (search, sentron, stats)
+Layer 5: Editing (editor modes, undo)
+Layer 6: Semantics (uml6d)
+Layer 7: Presentation (web UI, TUI)
+
+Dependencies flow downward. UML6D adds SDLC meaning
+without modifying lower layers.Storage docsNav docsSearch docsTopology docsEditor docsUML6D docsUndo docsTTS docsWeb UI docsPhext: Hierarchical Digital Memory
+
+Phext extends plain text to 11 dimensions via ASCII control codes.
+Line breaks (0x0A) give 2D; phext adds 7 more delimiter levels.
+Enables petabyte-scale organization in a single file.
+
+ASCII defined 0x01-0x1F in the 1960s. Most fell out of use.
+Phext reclaims them as dimensional delimiters.
+
+Performance: modern SSDs write 2 GB/sec but file abstractions
+haven't evolved since 25 KB/sec era. Phext eliminates
+filesystem overhead for structured data.Sentron: Neural Topology for 9D Navigation
+
+40 neurons (nearest populated coords) form a cortical column.
+8 axons per center (4 structural + 4 sequential).
+Each measures backward/forward reachability.
+
+Rebuilt sub-millisecond on every navigation event.
+Provides real-time topological awareness.6D UML: Structural Traceability via Dimensional Addressing
+
+Traditional traceability matrices annotate links between
+requirements, design, code, and tests. Annotations are fragile.
+
+6D UML makes the coordinate system the traceability matrix.
+An artifact's 5D address is stable across all SDLC phases.
+Collection selects the phase.
+
+Walking collection 2 to 4 at same 5D address traces
+requirement to implementation. No links to maintain.
+The structure IS the relationship.Onboarding: Your First 6D UML Session
+
+Step 1: Look at the top bar
+  - Colored badge = current SDLC phase
+  - 9D coordinate = exact position
+  - 5D address = artifact identity
+
+Step 2: Navigate
+  1-9 select dimension, h/l move, j/k jump populated
+
+Step 3: Phase navigation
+  p = phase picker, or quick keys: r/d/s/x
+
+Step 4: Trace panel
+  T = show all 9 phases for current artifact
+  Filled = content exists, empty = not yet written
+
+Step 5: Edit
+  e = edit mode, Ctrl+S = saveCore Concepts
+
+1. Phext: plain text extended to 11D via ASCII delimiters
+2. Scroll: basic unit of content
+3. Coordinate: 9D address (z.z.z/y.y.y/x.x.x)
+4. Collection: SDLC phase dimension
+5. 5D Address: artifact identity across phases
+6. Trace: walking artifact across all phases
+7. Sentron: local topology
+8. Phase: one of 9 SDLC stages
+9. Module: a book in 5D space
+10. Component: a chapter within a module
