@@ -1,8 +1,12 @@
 6D UML v0.1
 framework: 6d-uml
-phext-version: 0.3.1
+phext-version: 0.4.3
 generator: claude-max
-system: phext-lattice + uml6dcollection-map:
+system: phext-lattice + uml6d
+
+UML is a standardized, graphical modeling language used by software developers and system architects to visualize, specify, construct, and document software systems.
+
+6D UML is an extension to UML that enables us to track the life cycle of all software artifacts (inputs and outputs). The key design change is the introduction of a 5D asset ID and a stack of context panes.collection-map:
 1: Meta
 2: Requirements
 3: Design
@@ -638,7 +642,7 @@ Collection selects the phase.
 
 Walking collection 2 to 4 at same 5D address traces
 requirement to implementation. No links to maintain.
-The structure IS the relationship.Onboarding: Your First 6D UML Session
+The structure IS the relationship.Onboarding: Your First 6D UML Session
 
 Step 1: Look at the top bar
   - Colored badge = current SDLC phase
